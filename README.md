@@ -1,0 +1,414 @@
+# boox-telecom-fix
+
+> 解除文石 P6 Pro 小彩马的电话和短信封锁
+>
+> Unlock calling and SMS on Boox P6 Pro
+
+[![Firmware](https://img.shields.io/badge/Firmware-4.1.x-orange)](#)
+[![Magisk Module](https://img.shields.io/badge/Magisk_Module-v30.6-brightgreen)](#)
+[![SoC](https://img.shields.io/badge/SoC-SM7225-red)](#)
+
+**[中文](#中文) | [English](#english)**
+
+---
+
+# 中文
+
+## 问题
+
+文石 P6 Pro 小彩马配备了完整的电话功能硬件和 SIM 卡槽，但在软件层面禁用了电话和短信功能。插入 SIM 卡后可以使用蜂窝数据，但无法拨打/接听电话或收发短信。
+
+值得一提的是，文石在 2025 年 12 月 22 日发布的固件中曾短暂解禁了电话和短信功能，但很快在后续版本的固件更新中重新封堵。本模块的目的就是绕过这一限制，在新固件版本（2025-12-27）上恢复电话和短信功能。
+
+具体表现：
+
+- **电话**：拨号界面正常，点击拨打后静默失败，无任何提示
+- **短信**：短信应用正常打开，点击发送按钮无反应；也无法接收短信
+
+## 原因分析
+
+通过逆向分析 Boox 固件中的 `Telecom.apk` 和 `telephony-common.jar` 的 DEX 字节码，发现了两处独立的拦截机制：
+
+### 电话拦截
+
+位于 `/system/priv-app/Telecom/Telecom.apk` 中的 `TelecomServiceImpl`：
+
+- 初始化时将 `mEnableCallingFeature`（AtomicBoolean）硬编码为 `false`
+- 拨号时 `placeCall()` 调用 `isCallsEnabled()` 检查该标志，为 `false` 则静默丢弃呼叫
+- 日志输出：`placeCall Disable , callsEnabled false`
+- 但同时暴露了 binder 方法 `enableTelephonyCallingFeature(boolean)`（事务码 60），可以远程设置该标志
+
+### 短信拦截
+
+位于 `/system/framework/telephony-common.jar` 中的 `SmsController` 和 `SmsFeatureController`：
+
+- `SmsFeatureController` 维护 `mEnableSmsFeature`（AtomicBoolean），默认为 `false`
+- `SmsController.isSmsEnabled()` 委托给 `SmsFeatureController.getInstance().isSmsEnabled()`
+- 发送短信时 `sendTextForSubscriberWithOptions()` 检查 `isSmsEnabled()`，为 `false` 则拦截
+- 接收短信时 `onSmsReceived()` 同样检查该标志，导致**收发都被拦截**
+- 日志输出：`sendTextForSubscriberWithOptions() Sms Disable, smsEnabled false`
+- 与电话不同，`enableTelephonySmsFeature()` 方法**未暴露**在任何 binder 接口上，无法通过 `service call` 启用
+
+## 修复方式
+
+本模块采用两种策略分别解决电话和短信问题：
+
+### 电话修复（运行时）
+
+通过 `service.sh` 在每次开机时执行：
+
+```bash
+service call telecom 60 i32 1
+```
+
+这会调用 `enableTelephonyCallingFeature(true)`，将 `mEnableCallingFeature` 设为 `true`，解除电话拦截。
+
+### 短信修复（DEX 补丁）
+
+由于启用方法未暴露在 binder 接口上，采用 DEX 字节码补丁方式修改 `telephony-common.jar`：
+
+将 `SmsFeatureController.isSmsEnabled()` 方法修改为永远返回 `true`：
+
+```
+偏移:    0x115154
+修补前:  54 00 ba 0f 6e 10 85 57 00 00 0a 00 0f 00
+         (iget-object + invoke-virtual AtomicBoolean.get() + move-result + return)
+修补后:  12 10 0f 00 00 00 00 00 00 00 00 00 00 00
+         (const/4 v0, 1 + return v0 + nop 填充)
+```
+
+修补后重新计算了 DEX 的 SHA-1 签名和 Adler32 校验和。
+
+| 场景 | 修补前 | 修补后 |
+|------|--------|--------|
+| 普通短信收发 | 被拦截 ❌ | 正常工作 ✅ |
+| AtomicBoolean 状态 | 被绕过，不再检查 | 被绕过，不再检查 |
+
+## 前置条件
+
+- Boox P6 Pro 已 Root（Magisk）
+- Root 教程参考 [boox-p6pro-root](https://github.com/dynamicfire/boox-p6pro-root)
+
+## 安装
+
+从 [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) 下载 `boox-telecom-fix-v1.0.zip`。
+
+**方式一**：通过 Magisk App
+
+1. 打开 Magisk → 模块 → 从本地安装
+2. 选择 zip 文件
+3. 重启
+
+**方式二**：通过命令行
+
+```bash
+adb push boox-telecom-fix-v1.0.zip /sdcard/
+adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.0.zip'
+adb reboot
+```
+
+## 验证
+
+重启后检查日志：
+
+```bash
+adb shell su -c 'cat /data/local/tmp/telecom-fix.log'
+```
+
+测试电话：
+
+```bash
+adb shell am start -a android.intent.action.CALL -d tel:10010
+```
+
+测试短信：打开短信应用，向 10010 发送任意内容，确认发送成功并能收到回复。
+
+## 卸载
+
+通过 Magisk App 删除模块，或命令行：
+
+```bash
+adb shell su -c 'rm -rf /data/adb/modules/boox-telecom-fix'
+adb reboot
+```
+
+## 兼容性
+
+| 设备 | 固件 | 电话 | 短信 |
+|------|------|------|------|
+| Boox P6 Pro 小彩马 | 4.1 (SM7225) | ✅ | ✅ |
+
+电话的事务码（60）和短信的 DEX 补丁偏移可能因设备/固件版本而异。如需适配其他设备，参考[故障排除](#故障排除)部分。
+
+## 故障排除
+
+### 电话仍然无法拨打
+
+检查日志。如果显示 `telecom service not found`，可能需要更多启动时间。编辑模块目录下的 `service.sh`（`/data/adb/modules/boox-telecom-fix/service.sh`），增加等待时间。
+
+### 在其他设备上查找正确的事务码
+
+如果事务码 60 在你的设备上无效：
+
+```bash
+adb shell su
+
+logcat -s TelecomFramework 2>/dev/null | grep -i "enableTelephony\|callsEnabled" &
+
+for i in $(seq 55 80); do
+    echo "--- code $i ---"
+    service call telecom $i i32 1
+done
+
+# 测试拨号
+am start -a android.intent.action.CALL -d tel:10010
+```
+
+### 短信仍然无法收发
+
+确认模块已正确安装并且 `telephony-common.jar` 被替换：
+
+```bash
+adb shell su -c 'ls -la /data/adb/modules/boox-telecom-fix/system/framework/'
+```
+
+如果文件存在但仍不工作，可能存在 oat 预编译缓存：
+
+```bash
+adb shell su -c 'ls /system/framework/oat/*/telephony-common.*'
+```
+
+若存在 oat 文件，需要在模块中添加对应的空文件覆盖。
+
+## 与其他模块的兼容性
+
+本模块与 [boox-ams-fix](https://github.com/dynamicfire/boox-ams-fix) 完全兼容，可以同时安装：
+
+- **boox-ams-fix**：替换 `services.jar`（修复 Magisk App 崩溃）
+- **boox-telecom-fix**：替换 `telephony-common.jar`（解除短信拦截）+ `service.sh`（解除电话拦截）
+
+## 注意事项
+
+- 本模块的 JAR 补丁专门针对固件 4.1 的 `telephony-common.jar`，其他固件版本不适用
+- 如果文石后续更新固件修复了此问题，应卸载本模块
+- OTA 更新后可能需要重新安装
+
+## 相关项目
+
+- [boox-p6pro-root](https://github.com/dynamicfire/boox-p6pro-root) — P6 Pro 小彩马完整 Root 指南（包含 EDL 解锁 Bootloader）
+- [boox-ams-fix](https://github.com/dynamicfire/boox-ams-fix) — 修复 Boox 4.1.x 上 Magisk App 崩溃
+
+---
+
+# English
+
+## Problem
+
+The Boox P6 Pro has full telephony hardware and a SIM card slot, but calling and SMS are disabled at the software level. The SIM card works for cellular data, but you cannot make/receive calls or send/receive text messages.
+
+Notably, Boox briefly enabled calling and SMS in the firmware released on December 22, 2025, but quickly re-disabled these features in subsequent firmware updates. This module bypasses that restriction and restores calling and SMS on newer firmware version.
+
+Symptoms:
+
+- **Calling**: Dialer UI works, but pressing call silently fails with no feedback
+- **SMS**: Messaging app opens normally, but the send button does nothing; incoming SMS is also blocked
+
+## Root Cause
+
+Reverse engineering of the DEX bytecode in `Telecom.apk` and `telephony-common.jar` revealed two independent blocking mechanisms:
+
+### Call Blocking
+
+In `TelecomServiceImpl` inside `/system/priv-app/Telecom/Telecom.apk`:
+
+- `mEnableCallingFeature` (AtomicBoolean) is hardcoded to `false` on initialization
+- `placeCall()` checks `isCallsEnabled()` and silently drops the call if the flag is false
+- Log: `placeCall Disable , callsEnabled false`
+- A binder method `enableTelephonyCallingFeature(boolean)` (transaction code 60) is exposed but never called with `true`
+
+### SMS Blocking
+
+In `SmsController` and `SmsFeatureController` inside `/system/framework/telephony-common.jar`:
+
+- `SmsFeatureController` maintains `mEnableSmsFeature` (AtomicBoolean), defaults to `false`
+- `SmsController.isSmsEnabled()` delegates to `SmsFeatureController.getInstance().isSmsEnabled()`
+- `sendTextForSubscriberWithOptions()` checks `isSmsEnabled()` — blocked if false
+- `onSmsReceived()` also checks the same flag — **both sending and receiving are blocked**
+- Log: `sendTextForSubscriberWithOptions() Sms Disable, smsEnabled false`
+- Unlike calling, `enableTelephonySmsFeature()` is **not exposed** on any binder interface, so `service call` cannot enable it
+
+## The Fix
+
+This module uses two different strategies:
+
+### Call Fix (Runtime)
+
+`service.sh` runs on every boot:
+
+```bash
+service call telecom 60 i32 1
+```
+
+This invokes `enableTelephonyCallingFeature(true)`, setting `mEnableCallingFeature` to `true`.
+
+### SMS Fix (DEX Patch)
+
+Since the enable method is not exposed via binder, the module patches `telephony-common.jar` directly:
+
+`SmsFeatureController.isSmsEnabled()` is modified to always return `true`:
+
+```
+Offset:  0x115154
+Before:  54 00 ba 0f 6e 10 85 57 00 00 0a 00 0f 00
+         (iget-object + invoke-virtual AtomicBoolean.get() + move-result + return)
+After:   12 10 0f 00 00 00 00 00 00 00 00 00 00 00
+         (const/4 v0, 1 + return v0 + nop padding)
+```
+
+DEX SHA-1 signature and Adler32 checksum were recalculated after patching.
+
+| Scenario | Before Patch | After Patch |
+|----------|-------------|-------------|
+| SMS send/receive | Blocked ❌ | Works ✅ |
+| AtomicBoolean state | Bypassed, no longer checked | Bypassed, no longer checked |
+
+## Prerequisites
+
+- Boox P6 Pro with root access (Magisk)
+- For rooting instructions, see [boox-p6pro-root](https://github.com/dynamicfire/boox-p6pro-root)
+
+## Installation
+
+Download `boox-telecom-fix-v1.0.zip` from the [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) page.
+
+**Option 1**: Via Magisk App
+
+1. Open Magisk → Modules → Install from storage
+2. Select the zip file
+3. Reboot
+
+**Option 2**: Via command line
+
+```bash
+adb push boox-telecom-fix-v1.0.zip /sdcard/
+adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.0.zip'
+adb reboot
+```
+
+## Verification
+
+After reboot, check the log:
+
+```bash
+adb shell su -c 'cat /data/local/tmp/telecom-fix.log'
+```
+
+Test calling:
+
+```bash
+adb shell am start -a android.intent.action.CALL -d tel:10010
+```
+
+Test SMS: Open the messaging app, send any text to 10010, and confirm you can both send and receive.
+
+## Manual Usage (Without Module)
+
+Calling can be temporarily enabled (resets on reboot):
+
+```bash
+adb shell su -c 'service call telecom 60 i32 1'
+```
+
+SMS cannot be temporarily enabled via command line — the JAR patch in this module is required.
+
+## Uninstall
+
+Remove through Magisk App, or via command line:
+
+```bash
+adb shell su -c 'rm -rf /data/adb/modules/boox-telecom-fix'
+adb reboot
+```
+
+## Compatibility
+
+| Device | Firmware | Calling | SMS |
+|--------|----------|---------|-----|
+| Boox P6 Pro | 4.1 (SM7225) | ✅ | ✅ |
+
+The transaction code (60) and DEX patch offset may differ on other devices or firmware versions. See [Troubleshooting](#troubleshooting) for guidance on adapting to other devices.
+
+## Troubleshooting
+
+### Calling still doesn't work
+
+Check the log. If it shows `telecom service not found`, the service may need more startup time. Edit `service.sh` in the module directory (`/data/adb/modules/boox-telecom-fix/service.sh`) and increase the wait delay.
+
+### Finding the correct transaction code on other devices
+
+If code 60 doesn't work on your device:
+
+```bash
+adb shell su
+
+logcat -s TelecomFramework 2>/dev/null | grep -i "enableTelephony\|callsEnabled" &
+
+for i in $(seq 55 80); do
+    echo "--- code $i ---"
+    service call telecom $i i32 1
+done
+
+# Test calling
+am start -a android.intent.action.CALL -d tel:10010
+```
+
+### SMS still doesn't work
+
+Verify the module is installed and `telephony-common.jar` is replaced:
+
+```bash
+adb shell su -c 'ls -la /data/adb/modules/boox-telecom-fix/system/framework/'
+```
+
+If the file exists but SMS still fails, check for precompiled oat cache:
+
+```bash
+adb shell su -c 'ls /system/framework/oat/*/telephony-common.*'
+```
+
+If oat files exist, empty override files need to be added to the module.
+
+## Compatibility with Other Modules
+
+This module is fully compatible with [boox-ams-fix](https://github.com/dynamicfire/boox-ams-fix):
+
+- **boox-ams-fix**: Replaces `services.jar` (fixes Magisk App crash)
+- **boox-telecom-fix**: Replaces `telephony-common.jar` (unlocks SMS) + `service.sh` (unlocks calling)
+
+They replace different system files and do not interfere with each other.
+
+## Notes
+
+- The JAR patch targets `telephony-common.jar` from firmware 4.1 specifically; other firmware versions are not supported
+- If Boox fixes this in a future firmware update, uninstall this module
+- May need to be reinstalled after OTA updates
+
+## Related Projects
+
+- [boox-p6pro-root](https://github.com/dynamicfire/boox-p6pro-root) — Full root guide for P6 Pro (includes EDL bootloader unlock)
+- [boox-ams-fix](https://github.com/dynamicfire/boox-ams-fix) — Fix Magisk App crash on Boox firmware 4.1.x
+
+## Module Info
+
+```
+id=boox-telecom-fix
+name=Boox P6 Pro Telecom Fix (Call + SMS)
+version=v1.0
+author=玄昼
+```
+
+The module uses Magisk's systemless overlay to replace `/system/framework/telephony-common.jar` without modifying the actual system partition. Safe to uninstall at any time.
+
+## License
+
+MIT
