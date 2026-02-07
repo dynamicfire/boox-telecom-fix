@@ -91,7 +91,7 @@ service call telecom 60 i32 1
 
 ## 安装
 
-从 [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) 下载 `boox-telecom-fix-v1.0.zip`。
+从 [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) 下载 `boox-telecom-fix-v1.1.zip`。
 
 **方式一**：通过 Magisk App
 
@@ -102,8 +102,8 @@ service call telecom 60 i32 1
 **方式二**：通过命令行
 
 ```bash
-adb push boox-telecom-fix-v1.0.zip /sdcard/
-adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.0.zip'
+adb push boox-telecom-fix-v1.1.zip /sdcard/
+adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.1.zip'
 adb reboot
 ```
 
@@ -288,7 +288,7 @@ DEX SHA-1 signature and Adler32 checksum were recalculated after patching.
 
 ## Installation
 
-Download `boox-telecom-fix-v1.0.zip` from the [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) page.
+Download `boox-telecom-fix-v1.1.zip` from the [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) page.
 
 **Option 1**: Via Magisk App
 
@@ -299,8 +299,8 @@ Download `boox-telecom-fix-v1.0.zip` from the [Releases](https://github.com/dyna
 **Option 2**: Via command line
 
 ```bash
-adb push boox-telecom-fix-v1.0.zip /sdcard/
-adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.0.zip'
+adb push boox-telecom-fix-v1.1.zip /sdcard/
+adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.1.zip'
 adb reboot
 ```
 
@@ -421,7 +421,7 @@ They replace different system files and do not interfere with each other.
 ```
 id=boox-telecom-fix
 name=Boox P6 Pro Telecom Fix (Call + SMS)
-version=v1.0
+version=v1.1
 author=玄昼
 ```
 
