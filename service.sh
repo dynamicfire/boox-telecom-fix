@@ -1,9 +1,7 @@
 #!/system/bin/sh
-# Enable telephony calling feature (from v2.0 calling fix)
 LOGFILE=/data/local/tmp/telecom-fix.log
 echo "$(date): Boox telecom+sms fix starting..." > $LOGFILE
 
-# Wait for telecom service
 MAX_WAIT=60
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
@@ -16,7 +14,6 @@ while [ $WAITED -lt $MAX_WAIT ]; do
 done
 echo "$(date): telecom service ready after ${WAITED}s" >> $LOGFILE
 
-# Enable calling feature
 RESULT=$(service call telecom 60 i32 1 2>&1)
 echo "$(date): service call telecom 60 result: $RESULT" >> $LOGFILE
 
