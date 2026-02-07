@@ -107,6 +107,15 @@ adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.0.zip'
 adb reboot
 ```
 
+## 安装拨号器和短信应用
+
+解锁后，你可能还需要自行安装第三方拨号器和短信应用才能正常使用电话和短信功能。推荐：
+
+- **拨号器**：[Google Phone](https://play.google.com/store/apps/details?id=com.google.android.dialer)、[Fossify Phone](https://f-droid.org/packages/org.fossify.phone/)
+- **短信**：[Google Messages](https://play.google.com/store/apps/details?id=com.google.android.apps.messaging)、[Fossify SMS Messenger](https://f-droid.org/packages/org.fossify.messages/)
+
+安装后需要在系统设置中将其设为默认应用。
+
 ## 验证
 
 重启后检查日志：
@@ -294,6 +303,15 @@ adb push boox-telecom-fix-v1.0.zip /sdcard/
 adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.0.zip'
 adb reboot
 ```
+
+## Install Dialer and SMS Apps
+
+After unlocking, you may need to install third-party dialer and SMS apps to actually use calling and messaging. Recommended:
+
+- **Dialer**: [Google Phone](https://play.google.com/store/apps/details?id=com.google.android.dialer), [Fossify Phone](https://f-droid.org/packages/org.fossify.phone/)
+- **SMS**: [Google Messages](https://play.google.com/store/apps/details?id=com.google.android.apps.messaging), [Fossify SMS Messenger](https://f-droid.org/packages/org.fossify.messages/)
+
+After installation, set them as default apps in system settings.
 
 ## Verification
 
