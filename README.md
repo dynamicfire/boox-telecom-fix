@@ -22,14 +22,15 @@
 
 具体表现：
 
-- **电话**：拨号界面正常，点击拨打后静默失败，无任何提示
+- **拨出电话**：拨号界面正常，点击拨打后静默失败，无任何提示
+- **来电接听**：来电时设备无任何响铃或通知，来电被静默丢弃
 - **短信**：短信应用正常打开，点击发送按钮无反应；也无法接收短信
 
 ## 原因分析
 
-通过逆向分析 Boox 固件中的 `Telecom.apk` 和 `telephony-common.jar` 的 DEX 字节码，发现了两处独立的拦截机制：
+通过逆向分析 Boox 固件中的 `Telecom.apk` 和 `telephony-common.jar` 的 DEX 字节码，发现了三处独立的拦截机制：
 
-### 电话拦截
+### 拨出电话拦截
 
 位于 `/system/priv-app/Telecom/Telecom.apk` 中的 `TelecomServiceImpl`：
 
@@ -37,6 +38,27 @@
 - 拨号时 `placeCall()` 调用 `isCallsEnabled()` 检查该标志，为 `false` 则静默丢弃呼叫
 - 日志输出：`placeCall Disable , callsEnabled false`
 - 但同时暴露了 binder 方法 `enableTelephonyCallingFeature(boolean)`（事务码 60），可以远程设置该标志
+
+### 来电拦截
+
+同样位于 `TelecomServiceImpl` 中，`addNewIncomingCall()` 方法包含**双重拦截**：
+
+1. 首先检查 `isCallsEnabled()`（与拨出电话相同的标志）
+2. 即使 `callsEnabled` 为 `true`，还会检查 `isDefaultDialerPackage()`——如果当前默认拨号器是 Boox 内置的 `org.codeaurora.dialer`，则**静默丢弃来电**
+
+这意味着即使通过 `service call telecom 60 i32 1` 启用了电话功能，来电仍然会被第二道检查拦截。日志输出：
+
+```
+addNewIncomingCall Disable , callsEnabled true
+```
+
+注意 `callsEnabled true` 已经为真，但来电仍被拦截。逆向分析确认了拦截逻辑（DEX 偏移 `0x5ee04`）：
+
+```
+0007: if-eqz v0, +194      // callsEnabled == false → 拦截
+000f: if-eqz v2, +4        // isDefaultDialerPackage == false → 放行
+0011: goto/16 +184          // isDefaultDialerPackage == true → 拦截！
+```
 
 ### 短信拦截
 
@@ -51,9 +73,9 @@
 
 ## 修复方式
 
-本模块采用两种策略分别解决电话和短信问题：
+本模块采用三种策略分别解决拨出电话、来电接听和短信问题：
 
-### 电话修复（运行时）
+### 拨出电话修复（运行时）
 
 通过 `service.sh` 在每次开机时执行：
 
@@ -61,7 +83,19 @@
 service call telecom 60 i32 1
 ```
 
-这会调用 `enableTelephonyCallingFeature(true)`，将 `mEnableCallingFeature` 设为 `true`，解除电话拦截。
+这会调用 `enableTelephonyCallingFeature(true)`，将 `mEnableCallingFeature` 设为 `true`，解除拨出电话拦截。
+
+### 来电接听修复（运行时）
+
+通过 `service.sh` 在每次开机时执行：
+
+```bash
+telecom set-default-dialer com.google.android.dialer
+```
+
+将默认拨号器从 Boox 内置的 `org.codeaurora.dialer` 切换为 `com.google.android.dialer`，绕过 `addNewIncomingCall` 中的第二道拦截。
+
+> **注意**：`com.google.android.dialer` 不需要实际安装在设备上。该命令只是改变系统的默认拨号器设置值——`isDefaultDialerPackage()` 检查的是当前默认拨号器是否为 `org.codeaurora.dialer`，切换后该检查返回 `false`，来电即被放行。
 
 ### 短信修复（DEX 补丁）
 
@@ -91,7 +125,7 @@ service call telecom 60 i32 1
 
 ## 安装
 
-从 [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) 下载 `boox-telecom-fix-v1.1.zip`。
+从 [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) 下载 `boox-telecom-fix-v1.3.zip`。
 
 **方式一**：通过 Magisk App
 
@@ -102,8 +136,8 @@ service call telecom 60 i32 1
 **方式二**：通过命令行
 
 ```bash
-adb push boox-telecom-fix-v1.1.zip /sdcard/
-adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.1.zip'
+adb push boox-telecom-fix-v1.3.zip /sdcard/
+adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.3.zip'
 adb reboot
 ```
 
@@ -132,6 +166,19 @@ adb shell am start -a android.intent.action.CALL -d tel:10010
 
 测试短信：打开短信应用，向 10010 发送任意内容，确认发送成功并能收到回复。
 
+## 手动使用（不安装模块）
+
+电话功能可以临时启用（重启后失效）：
+
+```bash
+# 启用拨出电话
+adb shell su -c 'service call telecom 60 i32 1'
+# 启用来电接听
+adb shell su -c 'telecom set-default-dialer com.google.android.dialer'
+```
+
+短信功能无法通过命令行临时启用，必须使用本模块的 JAR 补丁。
+
 ## 卸载
 
 通过 Magisk App 删除模块，或命令行：
@@ -143,9 +190,9 @@ adb reboot
 
 ## 兼容性
 
-| 设备 | 固件 | 电话 | 短信 |
-|------|------|------|------|
-| Boox P6 Pro 小彩马 | 4.1 (SM7225) | ✅ | ✅ |
+| 设备 | 固件 | 拨出电话 | 来电接听 | 短信 |
+|------|------|----------|----------|------|
+| Boox P6 Pro 小彩马 | 4.1 (SM7225) | ✅ | ✅ | ✅ |
 
 电话的事务码（60）和短信的 DEX 补丁偏移可能因设备/固件版本而异。如需适配其他设备，参考[故障排除](#故障排除)部分。
 
@@ -194,7 +241,7 @@ adb shell su -c 'ls /system/framework/oat/*/telephony-common.*'
 本模块与 [boox-ams-fix](https://github.com/dynamicfire/boox-ams-fix) 完全兼容，可以同时安装：
 
 - **boox-ams-fix**：替换 `services.jar`（修复 Magisk App 崩溃）
-- **boox-telecom-fix**：替换 `telephony-common.jar`（解除短信拦截）+ `service.sh`（解除电话拦截）
+- **boox-telecom-fix**：替换 `telephony-common.jar`（解除短信拦截）+ `service.sh`（解除电话拦截 + 来电拦截）
 
 ## 注意事项
 
@@ -219,14 +266,15 @@ Notably, Boox briefly enabled calling and SMS in the firmware released on Decemb
 
 Symptoms:
 
-- **Calling**: Dialer UI works, but pressing call silently fails with no feedback
+- **Outgoing calls**: Dialer UI works, but pressing call silently fails with no feedback
+- **Incoming calls**: Device shows no ringing or notification when called; incoming calls are silently dropped
 - **SMS**: Messaging app opens normally, but the send button does nothing; incoming SMS is also blocked
 
 ## Root Cause
 
-Reverse engineering of the DEX bytecode in `Telecom.apk` and `telephony-common.jar` revealed two independent blocking mechanisms:
+Reverse engineering of the DEX bytecode in `Telecom.apk` and `telephony-common.jar` revealed three independent blocking mechanisms:
 
-### Call Blocking
+### Outgoing Call Blocking
 
 In `TelecomServiceImpl` inside `/system/priv-app/Telecom/Telecom.apk`:
 
@@ -234,6 +282,27 @@ In `TelecomServiceImpl` inside `/system/priv-app/Telecom/Telecom.apk`:
 - `placeCall()` checks `isCallsEnabled()` and silently drops the call if the flag is false
 - Log: `placeCall Disable , callsEnabled false`
 - A binder method `enableTelephonyCallingFeature(boolean)` (transaction code 60) is exposed but never called with `true`
+
+### Incoming Call Blocking
+
+Also in `TelecomServiceImpl`, the `addNewIncomingCall()` method has a **dual gate**:
+
+1. First checks `isCallsEnabled()` (same flag as outgoing calls)
+2. Even if `callsEnabled` is `true`, it also checks `isDefaultDialerPackage()` — if the current default dialer is Boox's built-in `org.codeaurora.dialer`, incoming calls are **silently dropped**
+
+This means even after enabling calling via `service call telecom 60 i32 1`, incoming calls are still blocked by the second check. Log output:
+
+```
+addNewIncomingCall Disable , callsEnabled true
+```
+
+Note that `callsEnabled true` is already set, but incoming calls are still blocked. Reverse engineering confirmed the blocking logic (DEX offset `0x5ee04`):
+
+```
+0007: if-eqz v0, +194      // callsEnabled == false → block
+000f: if-eqz v2, +4        // isDefaultDialerPackage == false → allow
+0011: goto/16 +184          // isDefaultDialerPackage == true → block!
+```
 
 ### SMS Blocking
 
@@ -248,9 +317,9 @@ In `SmsController` and `SmsFeatureController` inside `/system/framework/telephon
 
 ## The Fix
 
-This module uses two different strategies:
+This module uses three different strategies:
 
-### Call Fix (Runtime)
+### Outgoing Call Fix (Runtime)
 
 `service.sh` runs on every boot:
 
@@ -259,6 +328,18 @@ service call telecom 60 i32 1
 ```
 
 This invokes `enableTelephonyCallingFeature(true)`, setting `mEnableCallingFeature` to `true`.
+
+### Incoming Call Fix (Runtime)
+
+`service.sh` also runs on every boot:
+
+```bash
+telecom set-default-dialer com.google.android.dialer
+```
+
+This switches the default dialer from Boox's built-in `org.codeaurora.dialer` to `com.google.android.dialer`, bypassing the second gate in `addNewIncomingCall`.
+
+> **Note**: `com.google.android.dialer` does not need to be actually installed on the device. The command only changes the system's default dialer setting — `isDefaultDialerPackage()` checks whether the current default dialer is `org.codeaurora.dialer`, and after the switch it returns `false`, allowing incoming calls through.
 
 ### SMS Fix (DEX Patch)
 
@@ -288,7 +369,7 @@ DEX SHA-1 signature and Adler32 checksum were recalculated after patching.
 
 ## Installation
 
-Download `boox-telecom-fix-v1.1.zip` from the [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) page.
+Download `boox-telecom-fix-v1.3.zip` from the [Releases](https://github.com/dynamicfire/boox-telecom-fix/releases) page.
 
 **Option 1**: Via Magisk App
 
@@ -299,8 +380,8 @@ Download `boox-telecom-fix-v1.1.zip` from the [Releases](https://github.com/dyna
 **Option 2**: Via command line
 
 ```bash
-adb push boox-telecom-fix-v1.1.zip /sdcard/
-adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.1.zip'
+adb push boox-telecom-fix-v1.3.zip /sdcard/
+adb shell su -c 'magisk --install-module /sdcard/boox-telecom-fix-v1.3.zip'
 adb reboot
 ```
 
@@ -334,7 +415,10 @@ Test SMS: Open the messaging app, send any text to 10010, and confirm you can bo
 Calling can be temporarily enabled (resets on reboot):
 
 ```bash
+# Enable outgoing calls
 adb shell su -c 'service call telecom 60 i32 1'
+# Enable incoming calls
+adb shell su -c 'telecom set-default-dialer com.google.android.dialer'
 ```
 
 SMS cannot be temporarily enabled via command line — the JAR patch in this module is required.
@@ -350,9 +434,9 @@ adb reboot
 
 ## Compatibility
 
-| Device | Firmware | Calling | SMS |
-|--------|----------|---------|-----|
-| Boox P6 Pro | 4.1 (SM7225) | ✅ | ✅ |
+| Device | Firmware | Outgoing Calls | Incoming Calls | SMS |
+|--------|----------|----------------|----------------|-----|
+| Boox P6 Pro | 4.1 (SM7225) | ✅ | ✅ | ✅ |
 
 The transaction code (60) and DEX patch offset may differ on other devices or firmware versions. See [Troubleshooting](#troubleshooting) for guidance on adapting to other devices.
 
@@ -401,7 +485,7 @@ If oat files exist, empty override files need to be added to the module.
 This module is fully compatible with [boox-ams-fix](https://github.com/dynamicfire/boox-ams-fix):
 
 - **boox-ams-fix**: Replaces `services.jar` (fixes Magisk App crash)
-- **boox-telecom-fix**: Replaces `telephony-common.jar` (unlocks SMS) + `service.sh` (unlocks calling)
+- **boox-telecom-fix**: Replaces `telephony-common.jar` (unlocks SMS) + `service.sh` (unlocks outgoing and incoming calls)
 
 They replace different system files and do not interfere with each other.
 
@@ -421,7 +505,7 @@ They replace different system files and do not interfere with each other.
 ```
 id=boox-telecom-fix
 name=Boox P6 Pro Telecom Fix (Call + SMS)
-version=v1.1
+version=v1.3
 author=玄昼
 ```
 
