@@ -143,7 +143,15 @@ adb reboot
 
 ## 安装拨号器和短信应用
 
-解锁后，你可能还需要自行安装第三方拨号器和短信应用才能正常使用电话和短信功能。推荐：
+解锁后，你需要有可用的拨号器和短信应用才能正常使用电话和短信功能。
+
+**选项 1：使用系统内置应用**
+
+系统自带拨号器（`org.codeaurora.dialer`）和短信（`com.android.mms`）功能完整，只是被 Onyx Launcher 隐藏了。可以安装 [boox-shortcuts-fix](https://github.com/dynamicfire/boox-shortcuts-fix) 提供的快捷方式 APK 来访问它们——无需 Root，无需安装第三方应用。
+
+**选项 2：安装第三方应用**
+
+也可以安装第三方拨号器和短信应用：
 
 - **拨号器**：[Google Phone](https://play.google.com/store/apps/details?id=com.google.android.dialer)、[Fossify Phone](https://f-droid.org/packages/org.fossify.phone/)
 - **短信**：[Google Messages](https://play.google.com/store/apps/details?id=com.google.android.apps.messaging)、[Fossify SMS Messenger](https://f-droid.org/packages/org.fossify.messages/)
@@ -387,7 +395,15 @@ adb reboot
 
 ## Install Dialer and SMS Apps
 
-After unlocking, you may need to install third-party dialer and SMS apps to actually use calling and messaging. Recommended:
+After unlocking, you need a working dialer and SMS app to actually use calling and messaging.
+
+**Option 1: Use Built-in System Apps**
+
+The system dialer (`org.codeaurora.dialer`) and messaging app (`com.android.mms`) are fully functional — they're just hidden from Onyx Launcher. You can install the shortcut APKs from [boox-shortcuts-fix](https://github.com/dynamicfire/boox-shortcuts-fix) to access them — no root required, no third-party apps needed.
+
+**Option 2: Install Third-Party Apps**
+
+Alternatively, install third-party dialer and SMS apps:
 
 - **Dialer**: [Google Phone](https://play.google.com/store/apps/details?id=com.google.android.dialer), [Fossify Phone](https://f-droid.org/packages/org.fossify.phone/)
 - **SMS**: [Google Messages](https://play.google.com/store/apps/details?id=com.google.android.apps.messaging), [Fossify SMS Messenger](https://f-droid.org/packages/org.fossify.messages/)
